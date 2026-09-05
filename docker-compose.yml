@@ -1,0 +1,94 @@
+# docker-compose.yml — full Quant Research Platform stack
+#
+# Services:
+#   api        — FastAPI on :8000
+#   dashboard  — Streamlit on :8501
+#   scheduler  — APScheduler cron loop running the paper trader
+#
+# Bring up everything:
+#   docker compose up --build
+#
+# Bring up just the API + dashboard for development:
+#   docker compose up api dashboard
+
+services:
+  api:
+    build:
+      context: .
+      target: production
+    image: qrp:local
+    container_name: qrp-api
+    environment:
+      PAPER_CAPITAL: "${PAPER_CAPITAL:-100000}"
+      DATA_DIR: /app/data
+      RESULTS_DIR: /app/results
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./results:/app/results
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      target: production
+    image: qrp:local
+    container_name: qrp-dashboard
+    environment:
+      API_URL: "http://api:8000"
+      DATA_DIR: /app/data
+      RESULTS_DIR: /app/results
+    ports:
+      - "8501:8501"
+    # Override default command for the dashboard container
+    command: >
+      streamlit run qrp_platform/dashboard/app.py
+        --server.port 8501
+        --server.address 0.0.0.0
+        --server.headless true
+    volumes:
+      - ./data:/app/data
+      - ./results:/app/results
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  scheduler:
+    build:
+      context: .
+      target: production
+    image: qrp:local
+    container_name: qrp-scheduler
+    environment:
+      PAPER_CAPITAL: "${PAPER_CAPITAL:-100000}"
+      PAPER_CRON: "${PAPER_CRON:-0 9 * * 1-5}"
+      DATA_DIR: /app/data
+      RESULTS_DIR: /app/results
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      PAPER_TICKERS: "${PAPER_TICKERS:-AAPL,MSFT,NVDA,SPY}"
+      PAPER_STRATEGY: "${PAPER_STRATEGY:-momentum}"
+    command: >
+      python -c "
+      import os
+      from qrp_platform.live.scheduler import start_scheduler
+      from qrp_platform.strategies import get_strategy
+      tickers = [t.strip() for t in os.environ['PAPER_TICKERS'].split(',') if t.strip()]
+      strat = get_strategy(os.environ['PAPER_STRATEGY'])
+      start_scheduler(strat, tickers)
+      "
+    volumes:
+      - ./data:/app/data
+      - ./results:/app/results
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped

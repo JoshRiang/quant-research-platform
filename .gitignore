@@ -1,0 +1,46 @@
+# ----- Python -----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+.eggs/
+pip-log.txt
+
+# ----- Virtual envs -----
+.venv/
+venv/
+env/
+ENV/
+
+# ----- Build / dist -----
+build/
+dist/
+*.whl
+
+# ----- IDEs -----
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# ----- Test / coverage -----
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.cache
+
+# ----- Project -----
+results/
+data/
+*.log
+.env
+.env.local
+*.jsonl
+
+# ----- Streamlit -----
+.streamlit/secrets.toml
