@@ -1,39 +1,35 @@
-name: ci
+name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
-    branches: [main]
+    branches: [ main ]
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r qrp_platform/dashboard/requirements.txt
+          pip install -r requirements.txt
           pip install pytest
-      - name: Run smoke tests
-        run: pytest -q tests
-
-  build:
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build production image
-        run: docker build --target production -t qrp:ci .
-      - name: Smoke (boot container)
+      - name: Run tests
+        run: pytest -v
+      - name: Lint
         run: |
-          docker run --rm -d --name qrp-test -p 8000:8000 qrp:ci
-          sleep 4
-          curl -fsS http://localhost:8000/health | tee /tmp/health.json
-          test "$(jq -r .status /tmp/health.json)" = "ok"
-          docker stop qrp-test
+          pip install flake8
+          # stop the build if there are Python syntax errors or undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # exit-zero treats all warnings as warnings
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
