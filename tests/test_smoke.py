@@ -3,6 +3,8 @@
 These run WITHOUT network access — they use synthetic price data so the
 test suite is fast and offline-friendly.
 """
+
+# Maintenance: last reviewed 2026-09-07 (daily improvement cycle)
 from __future__ import annotations
 
 import json
