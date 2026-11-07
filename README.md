@@ -1,38 +1,8 @@
 # Quant Research Platform
 
-<p align="left">
-  <img src="https://img.shields.io/badge/Full%20Stack%20Quant-blue?style=flat-square" alt="topic"/>
-  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license"/>
-  <img src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square" alt="python"/>
-  <img src="https://img.shields.io/badge/status-active-success?style=flat-square" alt="status"/>
-</p>
+Vectorised backtest engine, strategy registry, FastAPI, Streamlit dashboard, paper broker.
 
-End-to-end quantitative research: backtest, paper trade, dashboard, API.
-
-## Overview
-
-This project is part of a curated portfolio of quantitative finance and software engineering work. It is designed to be:
-
-- **Self-contained** — runs out of the box with `pip install -r requirements.txt`
-- **Well-tested** — unit tests cover the core logic
-- **Documented** — clear API, type hints, and examples
-- **Production-ready patterns** — error handling, logging, CLI
-
-**Stack:** Python 3.10+ | FastAPI | Streamlit | Docker
-
-## Table of Contents
-
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Usage](#usage)
-- [Architecture](#architecture)
-- [Testing](#testing)
-- [Roadmap](#roadmap)
-- [Contributing](#contributing)
-- [License](#license)
-- [Author](#author)
-
-## Installation
+`BacktestEngine` takes a `Strategy` instance and a dict of `{ticker: OHLCV DataFrame}`. It builds a close-price panel, runs each strategy to get target weights, lags them one day (no look-ahead), compounds portfolio returns with transaction costs proportional to turnover, and emits metrics (total return, CAGR, Sharpe, Sortino, max drawdown, Calmar, volatility, hit rate, turnover). Optional walk-forward mode splits the panel into in-sample / out-of-sample at 70/30 and reports both. Strategies register via the `@register` class decorator — built-ins: `momentum` (12-1 return), `mean_reversion` (z-score band entry/exit), `multi_factor` (trend + momentum composite). Results persist to `metrics.json` + an interactive HTML report (Plotly equity curve, drawdown, rolling Sharpe, metrics table).
 
 ```bash
 git clone https://github.com/JoshRiang/quant-research-platform.git
@@ -42,71 +12,95 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Quick Start
-
 ```bash
-# Run the CLI
-python -m <module> --help
+# Smoke tests (synthetic data, no network)
+pytest -v
 
-# Run the example
-python examples/run_example.py
+# Start the FastAPI API
+uvicorn qrp_platform.api.main:app --reload
+
+# Start the Streamlit dashboard
+streamlit run qrp_platform/dashboard/app.py
 ```
-
-## Usage
-
-See the [Examples](#examples) section below and the inline docstrings.
 
 ```python
-from quant_research_platform import core_function
+from qrp_platform.backtest.engine import BacktestEngine
+from qrp_platform.strategies import get_strategy, list_strategies
+import pandas as pd, numpy as np
 
-result = core_function(input_data)
-print(result)
+print(list_strategies())
+# [{'name': 'momentum', ...}, {'name': 'mean_reversion', ...}, {'name': 'multi_factor', ...}]
+
+# Synthetic OHLCV for 3 tickers
+rng = np.random.default_rng(42)
+dates = pd.bdate_range(end=pd.Timestamp('2024-01-01'), periods=300)
+data = {}
+for i, t in enumerate(['AAA', 'BBB', 'CCC']):
+    ret = rng.normal(0.0003 + i*0.0001, 0.015 + i*0.002, size=300)
+    price = 100 * np.exp(np.cumsum(ret))
+    data[t] = pd.DataFrame({
+        'open': price * (1 + rng.normal(0, 0.001, 300)),
+        'high': price * (1 + np.abs(rng.normal(0, 0.003, 300))),
+        'low': price * (1 - np.abs(rng.normal(0, 0.003, 300))),
+        'close': price,
+        'volume': rng.integers(100_000, 5_000_000, 300),
+    }, index=dates)
+
+strat = get_strategy('momentum')
+engine = BacktestEngine(initial_capital=50_000.0)
+result = engine.run(strat, data)
+
+print(f'Total return: {result.metrics["total_return"]:.2%}')
+print(f'Sharpe:       {result.metrics["sharpe"]:.3f}')
+print(f'Max drawdown: {result.metrics["max_drawdown"]:.2%}')
+run_dir = engine.save(result)
+print(f'Report saved: {run_dir / "report.html"}')
 ```
 
-## Architecture
+Project structure:
 
 ```
 quant-research-platform/
-├── src/                  # Core package
-├── tests/                # Unit tests
-├── examples/             # Usage examples
-├── docs/                 # Additional documentation
-├── README.md
+├── qrp_platform/
+│   ├── __init__.py         # version 0.1.0
+│   ├── config.py           # pydantic Settings: paper_capital, paper_cron, data_dir, results_dir, api_host/port
+│   ├── backtest/
+│   │   ├── __init__.py
+│   │   ├── engine.py       # BacktestEngine (vectorised, walk-forward), BacktestResult, save()
+│   │   ├── metrics.py      # compute_metrics: total_return, cagr, sharpe, sortino, mdd, calmar, vol, hit_rate, turnover
+│   │   └── reports.py      # save_report: HTML with Plotly equity / drawdown / rolling-Sharpe
+│   ├── strategies/
+│   │   ├── __init__.py     # get_strategy, list_strategies, Strategy ABC + @register
+│   │   ├── base.py         # Strategy ABC + registry
+│   │   ├── momentum.py     # Momentum: long top-N by 12-1 return
+│   │   ├── mean_reversion.py # MeanReversion: z-score band entry/exit
+│   │   └── multi_factor.py # MultiFactor: trend + momentum composite
+│   ├── api/
+│   │   ├── __init__.py
+│   │   └── main.py         # FastAPI: /health, /strategies, /backtest POST
+│   ├── live/
+│   │   ├── __init__.py
+│   │   ├── paper.py        # PaperBroker: simulated account, run_one_tick rebalance, JSONL history
+│   │   └── scheduler.py    # APScheduler cron wrapper for paper rebalancing
+│   └── dashboard/
+│       └── app.py          # Streamlit: Backtest Runner, Run History, Strategy Catalog
+├── tests/test_smoke.py     # end-to-end: backtest on synthetic data, API, paper broker, registry, metrics
+├── examples/run_momentum_backtest.py
+├── docker-compose.yml
+├── pytest.ini
+├── requirements.txt        # pandas, numpy, fastapi, uvicorn, streamlit, plotly, scikit-learn, yfinance, APScheduler
 ├── LICENSE
-├── CHANGELOG.md
-├── CONTRIBUTING.md
-└── requirements.txt
+└── README.md
 ```
 
-## Testing
+Testing:
 
 ```bash
 pytest -v
 ```
 
-Tests use synthetic data to ensure deterministic results without external dependencies.
+Smoke tests use synthetic data — no network required.
 
-## Roadmap
+License: MIT — see [LICENSE](LICENSE).
 
-- [ ] Additional metrics and visualizations
-- [ ] Integration with live data sources
-- [ ] Performance optimization for large datasets
-- [ ] Extended documentation and tutorials
-
-## Contributing
-
-Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details.
-
-## License
-
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
-
-## Author
-
-**Joshua Riangkamang** — [github.com/JoshRiang](https://github.com/JoshRiang)
-
----
-
-<p align="center">
-  Built as part of a quantitative finance and software engineering portfolio.
-</p>
+Author: Joshua Riangkamang — [github.com/JoshRiang](https://github.com/JoshRiang)
