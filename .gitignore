@@ -35,8 +35,10 @@ htmlcov/
 .cache
 
 # ----- Project -----
-results/
-data/
+# Anchored to the repository root: an unanchored `data/` also matches the
+# qrp_platform/data package and silently excluded it from every commit.
+/results/
+/data/
 *.log
 .env
 .env.local
